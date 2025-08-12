@@ -1,0 +1,381 @@
+---
+title: "NLP. Keyword extraction"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-11-14"
+---
+<i>Authors:
+
+**Aliaksandr Mazur 109081**
+
+**Maciej Kowalczyk 108910**</i>
+
+```{r}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, conflicts = FALSE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(repos = c(CRAN = "https://cran.rstudio.com"))
+
+```
+
+# Brief introduction to NLP
+
+**Natural language processing (NLP)** is a subfield of computer science and artificial intelligence (AI) that uses machine learning to enable computers to understand and communicate with human language. 
+
+NLP enables computers and digital devices to recognize, understand and generate text and speech by combining computational linguistics—the rule-based modeling of human language—together with statistical modeling, machine learning and deep learning. 
+
+NLP research has helped enable the era of generative AI, from the communication skills of large language models (LLMs) to the ability of image generation models to understand requests. NLP is already part of everyday life for many, powering search engines, prompting chatbots for customer service with spoken commands, voice-operated GPS systems and question-answering digital assistants on smartphones such as Amazon’s Alexa, Apple’s Siri and Microsoft’s Cortana. 
+
+NLP also plays a growing role in enterprise solutions that help streamline and automate business operations, increase employee productivity and simplify business processes.
+
+# Practical example
+
+In this analysis, we explore a [dataset](https://www.kaggle.com/datasets/crowdflower/twitter-airline-sentiment/data) on Twitter sentiment toward major U.S. airlines, specifically focusing on travelers' tweets from February 2015. This dataset, sourced from Crowdflower's Data for Everyone library and reformatted for Kaggle, offers valuable insights into how passengers felt about their airline experiences during this period.
+
+The data contains sentiment classifications for each tweet: positive, negative, or neutral. For negative tweets, the dataset further breaks down the reason for dissatisfaction, such as issues like "late flight" or "rude service." This classification enables a detailed sentiment analysis across different airlines and provides a view into specific pain points affecting customer satisfaction.
+
+The objective of this practical analysis is to preprocess the text data, examine sentiment trends, and apply text mining techniques to identify frequent terms and patterns within positive and negative tweets.
+
+Firstly, we need to load necessary libraries, to start analysing our data.
+
+```{r, echo=TRUE}
+# Loading necessary libraries
+libraries <- c("dplyr", "tidytext", "RColorBrewer", "ggplot2", "wordcloud", "tm", "stringr", "udpipe", "topicmodels")
+
+# Function to check if each library is installed, and install it if missing
+install_if_missing <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+   install.packages(pkg)
+  }
+  library(pkg, character.only = TRUE) # Load the library
+}
+
+# Apply the function to each library in the list
+lapply(libraries, install_if_missing)
+
+# Set working directory and load dataset
+#setwd("D:\\Studying\\SGH\\Magisterka\\III semestr\\Artificial Intelligence")
+setwd("D:\\AI_project")
+dataset <- read.csv('Tweets.csv')
+
+# Step 2: Data Preparation and Initial Exploration
+# Examine the structure of the dataset
+str(dataset)
+```
+
+After loading the dataset, we should select relevant columns for analysis and count number of tweets for eahc category.
+
+```{r, echo=TRUE}
+# Select relevant columns for analysis
+tidy_dataset <- dataset %>%
+  select(airline_sentiment, negativereason, airline, text) 
+
+# Count number of tweets for each sentiment category
+sentiment_counts <- tidy_dataset %>%
+  count(airline_sentiment)
+print(sentiment_counts)
+```
+
+As we can see from summary of airline sentiment, negative tweets are higher than others. That means, people tend to tweet more in negative issues.
+
+# Visualization of whether the sentiment of the tweets was positive, neutral, or negative for each airlines
+
+```{r, echo=TRUE}
+# Visualize sentiment distribution for each airline
+ggplot(tidy_dataset, aes(x = airline_sentiment, fill = airline_sentiment)) +
+  geom_bar() +
+  facet_grid(. ~ airline) +
+  theme(axis.text.x = element_text(angle = 65, vjust = 0.6),
+        plot.margin = unit(c(2, 0, 2, 0), "cm")) +
+  ggtitle("Sentiment Distribution for Each Airline") +
+  labs(x = "Sentiment", y = "Number of Tweets")
+```
+
+United, US Airways, American substantially get negative reactions.
+Now let's split our data set on positive and negative reviews:
+
+```{r, echo=TRUE}
+# Step 3: Separate Positive and Negative Sentiments
+# Filter dataset for positive and negative reviews separately
+positive_reviews <- tidy_dataset %>%
+  filter(airline_sentiment == "positive") %>%
+  select(text) %>%
+  pull() %>%
+  paste(collapse = " ") 
+
+negative_reviews <- tidy_dataset %>%
+  filter(airline_sentiment == "negative") %>%
+  select(text) %>%
+  pull() %>%
+  paste(collapse = " ")
+```
+
+# Text preprocessing
+
+**Text preprocessing** is the method of cleaning and preparing raw text data for analysis, which is particularly essential for handling social media data. Twitter data, for example, can contain slang, special characters, typos, and abbreviations that need to be managed for accurate analysis. Key steps in text preprocessing include:
+
+1. Converting Text to Lowercase, where in order to ensure uniformity, all text is converted to lowercase, allowing words to be matched consistently (e.g., "Flight" and "flight" become the same).
+
+2. Removing Common Stopwords allows non-informative words like "the," "and," "is," which add little to sentiment, to be removed. We used a custom stopwords list specific to Twitter, filtering out symbols like "@" and URLs.
+
+# Word Tokenization
+
+**Word Tokenization** is the process of splitting text into individual words, or "tokens." Each token is an analyzable unit, allowing us to count word frequencies, apply sentiment analysis, and explore key themes. Here, we used the unnest_tokens() function from the tidytext package to break each tweet into individual tokens, facilitating a structured and detailed examination of the text data.
+
+```{r, echo=TRUE}
+# Step 4: Text Preprocessing and Word Tokenization
+# List of common words to exclude from analysis (manual stopwords)
+stopwords_manual <- c("@","to", "the","i", "a", "you", "for", "on", "and", "is", "are", "am", 
+                      "my", "in", "it", "me", "of", "was", "your", "so","with", "at", "just", 
+                      "this", "http", "t.co", "have", "that", "be", "from", "will", "we", "an", "can")
+
+# Convert text to character and tokenize into words
+tidy_dataset$text <- as.character(tidy_dataset$text)
+tidy_dataset <- tidy_dataset %>%
+  unnest_tokens(word, text) %>%
+  filter(!(word %in% stopwords_manual)) 
+
+# Separate positive and negative words for word cloud generation
+positive_words <- tidy_dataset %>%
+  filter(airline_sentiment == "positive") %>%
+  count(word, sort = TRUE)
+
+negative_words <- tidy_dataset %>%
+  filter(airline_sentiment == "negative") %>%
+  count(word, sort = TRUE)
+```
+
+To visualize the most common words associated with positive and negative sentiments in the Twitter dataset, we generate **word clouds**. Word clouds display frequently occurring words in a larger font, making them easy to identify at a glance. This provides a clear and immediate impression of the main themes or concerns expressed by users.
+
+```{r, echo=TRUE}
+# Step 5: Generate Word Clouds for Positive and Negative Sentiments
+# Word cloud for positive reviews
+wordcloud(positive_words$word, positive_words$n, max.words = 100, random.order = FALSE, 
+          rot.per = 0.30, colors = brewer.pal(10, "Blues"))
+```
+
+```{r, echo=TRUE}
+# Word cloud for negative reviews
+wordcloud(negative_words$word, negative_words$n, max.words = 100, random.order = FALSE, 
+          rot.per = 0.3, colors = brewer.pal(10, "Reds"))
+```
+
+In the initial stages of our analysis, we manually preprocessed the dataset by tokenizing words, removing stopwords, and performing basic transformations to prepare the text for analysis. However, this process required significant manual intervention and limited the depth of linguistic analysis we could achieve.
+
+In this step, we leverage a pre-trained Natural Language Processing (NLP) model provided by the [UDPipe package](https://cran.r-project.org/web/packages/udpipe/index.html), which enhances our capabilities by performing sophisticated language processing tasks automatically. The UDPipe toolkit offers language-agnostic functionalities, including tokenization, parts-of-speech (POS) tagging, lemmatization (extracting base forms of words), and dependency parsing to uncover syntactic relationships within the text. This allows for richer and more detailed insights compared to basic preprocessing.
+
+The pre-trained UDPipe model allows us to:
+
+* Automatically tokenize the text for analysis without needing manual intervention.
+
+* Perform Part-of-Speech tagging, which assignes a grammatical category, such as noun, verb, adjective, adverb, etc. in order to classify each word according to its role.
+
+* Apply lemmatization to standardize words to their base forms, allowing us to identify key terms more accurately.
+
+* Conduct dependency parsing to analyze relationships between words, which can reveal context and meaning beyond simple word frequencies.
+
+```{r, echo=TRUE}
+# Step 6: Advanced Text Analysis with NLP Pre-trained Model
+# Load pre-trained English model for NLP using UDPipe
+library(udpipe)
+#ud_model <- udpipe_download_model(language = "english")
+ud_model <- udpipe_load_model("D:\\AI_project\\english-ewt-ud-2.5-191206.udpipe")
+#ud_model <- udpipe_load_model("D:\\Studying\\SGH\\Magisterka\\III semestr\\Artificial Intelligence\\english-ewt-ud-2.5-191206.udpipe")
+
+# Annotate negative reviews text for linguistic processing
+    #doc <- udpipe_annotate(ud_model, x = negative_reviews)
+    #doc <- as.data.frame(doc)
+# We may also load annotated data to avoid reprocessing
+doc <- readRDS("D:\\AI_project\\processed_doc.rds")
+# Display the first 150 lemmas in the annotated text (lemmas represent base forms of words)
+head(doc$lemma, 150)
+```
+
+# Term-Frequency Approach
+
+The **term-frequency (TF)** approach is a simple yet effective method used to measure how often a term (or word) appears in a document or a collection of documents. This approach is foundational in natural language processing (NLP) and text mining, helping quantify the importance of words in a given text.
+
+# Key Aspects of Term Frequency:
+* Definition: The term frequency of a word in a document refers to the count of how many times that word appears in the document.
+   
+* Calculation: For each word in a document, the term frequency can be calculated using the following formula:
+
+   \[
+   \text{TF}_{\text{word}} = \frac{\text{Number of times the word appears in the document}}{\text{Total number of words in the document}}
+   \]
+
+This normalization ensures that the frequency of a word is not biased by the length of the document. If a document is longer, the frequency of words will be normalized by the total word count, making it easier to compare across documents.
+
+```{r, echo=TRUE}
+# Step 7: Term Frequency Analysis with Annotated Data
+# Compute frequency of each lemma
+word_freq <- table(doc$lemma)
+
+# Get the top 50 most frequent lemmas
+top_50_words <- head(sort(word_freq, decreasing = TRUE), 40)
+
+# Create a word cloud of the top 50 most frequent words
+wordcloud(names(top_50_words), freq = top_50_words, scale = c(4, 0.4), min.freq = 4, 
+          max.words = 300, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Paired"))
+```
+
+# Preprocessing and Word Cloud Generation
+
+In this part of the analysis, we perform additional preprocessing steps (removing stopwords, empty elements, numbers, single words) on the textual data and generate a word cloud based on the most frequent terms.
+
+```{r, echo=TRUE}
+# Remove stopwords
+text <- removeWords(doc$lemma, stopwords("english"))
+
+# Remove empty elements
+text <- text[!grepl("[0-9]", text)]
+text <- text[nchar(text) >= 3]
+text <- text[!text==""]
+text <- gsub("[^a-zA-Z]", " ", text)
+
+# Count the number of occurrences of each lemma
+word_freq <- table(text)
+
+# Get the top 150 most frequent lemmas
+top_150_words <- head(sort(word_freq, decreasing = TRUE), 150)
+
+# A word cloud of the top 150 most frequent words
+wordcloud(names(top_150_words), freq = top_150_words, scale=c(2,0.2), min.freq=0, max.words=Inf, random.order=FALSE, rot.per=0.35, colors=brewer.pal(8, "Paired"))
+```
+
+# Step 8: TF-IDF Analysis to Identify Important Terms
+
+The TF-IDF (Term Frequency-Inverse Document Frequency) technique helps identify terms that are especially significant in distinguishing between positive, negative, and neutral tweets. Words with higher TF-IDF scores appear frequently in one sentiment category but not as commonly across all categories, which allows us to see sentiment-specific language.
+
+```{r, echo=TRUE}
+colnames(doc)
+
+# Step 8: TF-IDF Analysis to Identify Important Terms
+# Compute TF-IDF scores to highlight important words in each sentiment
+tf_idf_data <- tidy_dataset %>%
+  count(airline_sentiment, word) %>%
+  bind_tf_idf(word, airline_sentiment, n) %>%
+  arrange(desc(tf_idf))
+
+# Display top keywords based on high TF-IDF values
+head(tf_idf_data, 20)
+```
+
+A high TF value means the word is frequent in the document.Whereas Inverse Document Frequency (IDF) measures how rare a term is across all documents (in our dataset a "document" is depicted simply by a single opinion).
+Mathematical formula is provided below:
+
+\[
+IDF = \log(\frac{Number\ of\ documents \ containing\ the\ term}{Total\ number\ of\ documents })
+\]
+
+A high IDF value indicates that the term is rare across the corpus (i.e., it’s less frequently mentioned across multiple documents).
+
+Finally, TF-IDF will help us identify words that are more meaningful or representative in a particular document by considering both how frequently a term appears and how common it is across other documents.
+
+\[
+TF-IDF = TF \times IDF
+\]
+
+High TF-IDF scores indicate terms that are frequent in a specific document but infrequent across other documents, highlighting their uniqueness or importance in that document.
+
+For the word “worst” in the "negative" sentiment group, the TF is 0.0019 and the IDF is 1.0986, giving it a moderate importance.
+
+Words with high TF-IDF values (like "excellent" in the positive category) are likely meaningful terms in their respective sentiment contexts and they suggest strong or distinctive expression within the sentiment.
+
+Neutral tweets also showcase unique terms like "journal" and "policy," suggesting the presence of general or information-oriented language.
+
+Bringing up rear, high-scoring terms like "worst," "ridiculous," "unacceptable," and "fail" are distinctively common in negative tweets, reflecting strong dissatisfaction among users. Conversely, words like "smooth," "excellent," and "fantastic" have higher TF-IDF scores in positive tweets, capturing themes of positive experiences. 
+
+# Step 9: Keyword Extraction Using RAKE
+
+RAKE is a keyword extraction algorithm designed to identify phrases that are highly relevant within a document. Unlike TF-IDF, which focuses on single words, RAKE captures multi-word phrases that represent key concepts or themes.
+To determine the significance of each keyword phrase, RAKE calculates a score based on two key factors:
+
+1. RAKE Keyword Extraction, where RAKE begins by splitting the document into words and identifying relevant words (like nouns and adjectives). Then it forms candidate keyword phrases by grouping relevant words and separating them by stopwords (like “the,” “and,” etc.).
+
+2. RAKE Scoring Calculation where each keyword phrase’s RAKE score is calculated based on two factors:
+  - Frequency of the phrase, i.e. How often the keyword phrase appears in the document.
+  - Word degree and frequency, which is number of connections a word has within phrases and frequency of individual words in the phrase.
+  
+  The simplified formula for RAKE algorithm might be written as:
+  \[
+  RAKE \ score = \frac{Frequency \ of \ all \ words \ in \ the \ phrase}{Sum \ of \ degrees \ of \ all \ words \ in \ the \ phrase}
+  \]
+
+A higher RAKE score indicates that a phrase is both frequent and contains words with high degrees, making it more relevant as a keyword.
+
+```{r, echo=FALSE}
+rake_keywords <- keywords_rake(x = doc, term = "lemma", group = "doc_id", relevant = doc$upos %in% c("NOUN", "ADJ"))
+head(rake_keywords, 20)
+```
+
+As a results of our analysis, notable combinations include:
+
+1. For Negative Sentiment, opinions such as “late Flightr” has a high RAKE score of 3.29, indicating it is a highly relevant phrase in its context. Furthermore, "worst service," and "overhead bin," are highlighting major pain points like dissatisfaction with customer service or poor overhead luggage lockers quality.
+
+2. In case of neutral Sentiment, phrases such as "social media" and "customer service," which may be used in general discussions, not necessarily tied to strong sentiment.
+
+Once again, RAKE focuses on multi-word phrases, making it useful for capturing themes or ideas in a more contextual form.
+
+# Step 10: Topic Modeling with LDA (Latent Dirichlet Allocation)
+
+Latent Dirichlet Allocation (LDA) is a popular topic modeling technique used to discover latent topics in a text corpus. It assumes that each document in a corpus is composed of multiple topics, and each topic consists of words with varying probabilities.
+
+LDA models the corpus by:
+
+1. Document-Topic Distribution, which assigns a probability of each topic being present in a given document.
+
+2. Topic-Word Distribution defines the likelihood of each word being associated with a particular topic.
+
+Mathematically, the probability of a word 
+\[
+P(w|d) = \sum_{k=1}^K P(w|z=k) \cdot P(z=k|d)
+\]
+
+<i> where𝐾 is the number of topics, 𝑃(𝑤∣𝑧=𝑘) is the probability of word 
+𝑤 in topic𝑘, and 𝑃(𝑧=𝑘∣𝑑) is the probability of topic𝑘in document𝑑.</i>
+
+Choosing𝑘involves balancing coherence, perplexity, and interpretability to achieve the best thematic resolution for the dataset.
+
+Using six topics (k = 6), we observe distinct thematic clusters within the dataset. For each topic, the most frequently associated terms indicate the focus areas:
+
+```{r, echo=FALSE}
+# Step 10: Topic Modeling with LDA (Latent Dirichlet Allocation)
+# Create a Document-Term Matrix
+tidy_dtm <- tidy_dataset %>%
+  count(airline_sentiment, word, sort = TRUE)
+dtm <- tidy_dtm %>%
+  cast_dtm(document = airline_sentiment, term = word, value = n)
+
+# Apply LDA to extract topics
+lda_model <- LDA(dtm, k = 6, control = list(seed = 1234)) # k = number of topics
+lda_topics <- tidy(lda_model, matrix = "beta")
+
+# Display top terms for each topic
+top_terms <- lda_topics %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+print(top_terms)
+
+```
+
+**Topic 1:** This topic is heavily airline-centered, with terms like "united," "jetblue," and "southwestair," suggesting discussions about specific airlines.
+
+**Topic 2:** Words like "delay," "cancel," and "time" point to themes around flight disruptions.
+
+**Topic 3:** Contains terms such as "service," "customer," and "care," which likely relates to customer service discussions.
+
+**Topic 4:** This topic centers around logistics, including terms like "airport," "gate," and "boarding."
+
+**Topic 5:** Emphasizes "seat," "comfortable," and "crew," which might relate to passenger comfort and in-flight experience.
+
+**Topic 6:** Shows a focus on complaints, with terms like "help," "wait," and "response," indicating customer frustration with support responsiveness.
+These topics help us understand broad patterns, where each group captures different facets of customer experiences.
+
+Higher beta words are central to the topic's theme, and interpreting these terms collectively can help label and understand the overarching themes that each topic represents.
